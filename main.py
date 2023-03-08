@@ -1,31 +1,30 @@
 from timeit import timeit
 
 def format_name(name:str):
-    """ Formate le nom d'un arrêt (eg. POISY_COLLÈGE -> Poisy collège)"""
+    """ Formate le nom d'un arrêt (ex. POISY_COLLÈGE -> Poisy collège)"""
     return name.replace("_", " ").capitalize()
 
-class Horaire:
+class Schedule:
     """ Représente un horaire de bus """
-    def __init__(self, hour:int=0, minute:int=0, day:int=0):
-        self.day = day
+    def __init__(self, hour:int=0, minute:int=0):
         self.hour = hour
         self.minute = minute
 
     def duration(self, other):
         """Renvoie la durée entre deux horaires en minutes"""
-        return (self.day - other.day) * 60 * 24 + (self.hour - other.hour) * 60 + self.minute - other.minute
+        return (self.hour - other.hour) * 60 + self.minute - other.minute
 
     @staticmethod
     def from_scratch(text):
-        """ Renvoie un objet horaire à partir d'un horaire de fichier txt (eg. 5:58 | 7:05 | - | 8:00)"""
+        """ Renvoie un horaire normalisé à partir d'une donnée de fichier (ex. 5:58 | 7:05 | - | 8:00)"""
         if text == "-": return None
-        return Horaire(*map(int, text.split(":")))
+        return Schedule(*map(int, text.split(":")))
 
     def __lt__(self, other):
         return self.hour < other.hour or self.minute < other.minute
 
     def __sub__(self, other):
-        return Horaire(self.hour-other.hour, self.minute-other.minute)
+        return Schedule(self.hour - other.hour, self.minute - other.minute)
 
     def __str__(self):
         return f"{self.hour:02d}:{self.minute:02d}"
@@ -33,34 +32,38 @@ class Horaire:
     def __repr__(self):
         return self.__class__.__name__ + f' {self.hour}:{self.minute}'
 
+    def __bool__(self):
+        return bool(self.hour or self.minute)
+
 class NoPathException(Exception):
     """ Exception lancée quand il n'existe aucun trajet entre deux arrets """
     pass
 
 class Path:
     """ Représente un trajet direct ou indirect entre deux arrêts """
-    def __init__(self, departure:Horaire, stops:list, arrival:Horaire):
+    def __init__(self, departure:Schedule, stops:list, arrival:Schedule):
         self.departure = departure
         self.stops = stops
         self.arrival = arrival
 
     def is_shorter(self, other):
-        """ Compares number of stops """
+        """ Compare le nombre d'arrêts des trajets """
         if len(self.stops) == len(other.stops):
             return self.is_foremost(other)
         return len(self.stops) < len(other.stops)
 
     def is_faster(self, other):
-        """ Compares duration of stops """
+        """ Compare la durée des trajets """
         if self.duration() == other.duration():
             return self.is_foremost(other)
         return self.duration() < other.duration()
 
     def is_foremost(self, other):
-        """ Compares time of arrivals of stops """
+        """ Compare l'horaire d'arrivée des trajets """
         return self.arrival < other.arrival
 
     def duration(self):
+        """ Calcul la durée entre le début et la fin du trajet """
         return self.arrival.duration(self.departure)
 
     def __str__(self):
@@ -68,28 +71,27 @@ class Path:
 
 class Stop:
     """ Représente un arrêt de bus """
+
+    # Attributs statiques utilisés pour le système de cache
     cache:dict = dict()
     maxCache:int = 2048
     nbSkippedWithCache:int = 0
+
     def __init__(self, name:str, neighbors:list=None, neighborsWeekend:list=None):
         self.name = name
-        # neighbors et neighborsWeekend sont des listes de tuples
-        # - Horaire (l'horaire de départ)
-        # - Horaire (l'horaire d'arrivée)
-        # - Stop (l'arrêt d'arrivée)
         self.neighbors = [] if neighbors is None else neighbors
         self.neighborsWeekend = [] if neighborsWeekend is None else neighborsWeekend
 
-    def paths(self, terminus:str, depart:Horaire, weekend:bool=False, _explored:set=None):
+    def paths(self, terminus:str, departure:Schedule, weekend:bool=False, _explored:set=None):
         """ Méthode principale, renvoie l'ensemble des chemins possibles entre deux arrêts"""
         explored = set()
         explored.add(self.name)
         if _explored is not None: explored.update(_explored)
 
         paths = []
-        if self.name == terminus: return [Path(depart, [self], depart)]
+        if self.name == terminus: return [Path(departure, [self], departure)]
 
-        cacheTuple = (self.name, terminus, depart)
+        cacheTuple = (self.name, terminus, departure)
         # On utilise le cache
         if cacheTuple in Stop.cache:
             Stop.nbSkippedWithCache += 1
@@ -99,7 +101,7 @@ class Stop:
         neighborsToSearch = self.neighborsWeekend if weekend else self.neighbors
         for neighborDeparture, neighborArrival, neighbor in neighborsToSearch:
             # On skip le chemin si l'horaire est dépassé
-            if neighborDeparture < depart: continue
+            if neighborDeparture < departure: continue
             # On le skip s'il a déjà été traversé
             if neighbor.name in explored: continue
 
@@ -111,7 +113,7 @@ class Stop:
 
         return paths
 
-    def best_paths(self, terminus:str, departure:Horaire, weekend:bool=False):
+    def best_paths(self, terminus:str, departure:Schedule, weekend:bool=False):
         """ Calcule les meilleurs chemins renvoyés par la méthode paths """
         paths:list[Path] = self.paths(terminus, departure, weekend)
         if not paths: raise NoPathException(f"Il n'existe pas de chemin entre \"{self.name}\" et \"{terminus}\" après {departure}")
@@ -122,22 +124,28 @@ class Stop:
             if path.is_foremost(foremost): foremost = path
         return len(paths), foremost, shortest, fastest
 
-    def display_best_paths(self, terminus:str, departure:Horaire=Horaire(), weekend:bool=False):
+    def display_best_paths(self, terminus:str, departure:Schedule=Schedule(), weekend:bool=False):
         """ Affiche les chemins renvoyés par la méthode best_paths """
         try:
             bestPaths = self.best_paths(terminus, departure, weekend)
-            print(f"Voici les meilleurs trajets pour aller de \"{self.name}\" à \"{terminus}\" parmi {bestPaths[0]:_} trajets:")
-            print(f"Foremost: {bestPaths[1]}, durée: {bestPaths[1].duration()}m")
-            print(f"Shortest: {bestPaths[2]}, durée: {bestPaths[2].duration()}m")
-            print(f"Fastest: {bestPaths[3]}, durée: {bestPaths[3].duration()}m")
+            print(f'Voici les meilleurs trajets pour aller de \"{self.name}\" à \"{terminus}\"'
+                  , f' à partir de {departure}' if departure else ''
+                  , f' en weekend' if weekend else ''
+                  , f', parmi {bestPaths[0]:_} trajets:'
+                  , sep='')
+            print(f"\tForemost: {bestPaths[1]}, durée: {bestPaths[1].duration()}m")
+            print(f"\tShortest: {bestPaths[2]}, durée: {bestPaths[2].duration()}m")
+            print(f"\tFastest: {bestPaths[3]}, durée: {bestPaths[3].duration()}m")
         except NoPathException as ex:
             print(ex)
+        print()
 
-    def filter(self, horaire: Horaire):
-        """ Retourne l'arrêt avec tous les voisins accessibles à l'horaire donnée """
+    def filter(self, horaire: Schedule, weekend:bool=False):
+        """ Retourne l'arrêt avec tous ses voisins accessibles à l'horaire donnée """
+        neighborsToFilter = self.neighborsWeekend if weekend else self.neighbors
         return Stop(self.name, [
             neighbor
-            for neighbor in self.neighbors
+            for neighbor in neighborsToFilter
             if not(neighbor[0] < horaire)
         ])
 
@@ -153,11 +161,6 @@ class Stop:
             res = f"{cache[0]} -> {cache[1]} ({cache[2]}):\n\t"
             res += '\n\t'.join(path.__str__() for path in paths) if paths else "Pas de chemin"
             print(res)
-
-    @staticmethod
-    def filterByHoraire(stops:dict, horaire:Horaire)->dict:
-        """ Retourne un dictionnaire {nomArret: Arret} de tout les arrets filtrer par horaire """
-        return {name: stop.filter(horaire) for name, stop in stops.copy().items()}
 
     def __add__(self, other):
         if isinstance(other, Stop): return [self, other]
@@ -232,7 +235,7 @@ class Network:
         for i, paragraph in enumerate(paragraphs):
             horaires = [
                 [
-                    Horaire.from_scratch(horaire)
+                    Schedule.from_scratch(horaire)
                     for horaire in ligne.split(" ")[1:]
                 ]
                 for ligne in paragraph.split("\n")
@@ -243,60 +246,67 @@ class Network:
 
             # Gestion différente selon chaque paragraphe
             if i == 0:
-                network.addHoraires(horaireColumns, reverse=False, weekend=False)
+                network.addSchedules(horaireColumns, reverse=False, weekend=False)
             if i == 1:
-                network.addHoraires(horaireColumns, reverse=True, weekend=False)
+                network.addSchedules(horaireColumns, reverse=True, weekend=False)
             if i == 2:
-                network.addHoraires(horaireColumns, reverse=False, weekend=True)
+                network.addSchedules(horaireColumns, reverse=False, weekend=True)
             if i == 3:
-                network.addHoraires(horaireColumns, reverse=True, weekend=True)
+                network.addSchedules(horaireColumns, reverse=True, weekend=True)
         return network
 
-    def addHoraires(self, horaires: list[tuple], reverse:bool=False, weekend:bool = False):
+    def addSchedules(self, horaires: list[tuple], reverse:bool=False, weekend:bool = False):
         """ Ajoute des voisins aux différents arrêts (c'est un brainfuck, soyez prévenus) """
         for fuseau in horaires:
-            oldArret, newArret, oldHoraire = None, None, None
+            oldArret, newArret, oldSchedule = None, None, None
             for iArret, horaire in enumerate(fuseau):
                 # Cas de l'horaire vide "-"
                 if horaire is None: continue
                 newArret = self[-iArret if reverse else iArret]
                 if oldArret is not None:
                     if weekend:
-                        oldArret.neighborsWeekend.append((oldHoraire, horaire, newArret))
+                        oldArret.neighborsWeekend.append((oldSchedule, horaire, newArret))
                     else:
-                        oldArret.neighbors.append((oldHoraire, horaire, newArret))
-                oldArret, oldHoraire = self[-iArret if reverse else iArret], horaire
+                        oldArret.neighbors.append((oldSchedule, horaire, newArret))
+                oldArret, oldSchedule = self[-iArret if reverse else iArret], horaire
+
+    def filter(self, horaire: Schedule, weekend:bool=False):
+        """ Retourne un réseau dont tout les arrets sont filtrés par horaire """
+        return Network([stop.filter(horaire, weekend) for stop in self.stops])
 
     def __str__(self):
         return " | ".join(stop.name for stop in self.stops)
 
 
-def displayBestPaths(departure:Stop, arrivals:dict, horaires:list[Horaire], weekend:bool=False):
-    """ Affiche les meilleurs chemins d'un arret à tout les autres, pour différentes horaires """
+def displayBestPaths(departure:Stop, network:Network, horaires:list[Schedule], weekend:bool=False):
+    """ Affiche les meilleurs chemins d'un arret à tout les autres, pour différents horaires """
+    print("#####################################\n"
+          "#               PATHS               #\n"
+          "#####################################")
     for horaire in horaires:
         print("-----",horaire,"-----")
-        stopsFiltered = Stop.filterByHoraire(arrivals, horaire)
-        for arrival in stopsFiltered.values():
+        stopsFiltered = network.filter(horaire, weekend)
+        for stop in stopsFiltered:
             try:
-                departure.display_best_paths(arrival.name, horaire, weekend)
+                departure.display_best_paths(stop.name, horaire, weekend)
             except NoPathException as ex: print(ex)
-            finally:
-                print("Cache hits:", Stop.nbSkippedWithCache)
-                print()
-        Stop.reset_cache()
 
-def displayStats(departure:Stop, arrivals:dict, horaires:list[Horaire]):
-    """ Affiche les statistiques (durée, nombre de chemins, cache hits) lors du calcul de trajet d'un arret à tout les autres, pour différentes horaires """
+def displayStats(departure:Stop, network:Network, horaires:list[Schedule], weekend:bool=False):
+    """ Affiche les statistiques (durée, nombre de chemins, cache hits) lors du calcul de trajet d'un arret à tout les autres, pour différents horaires """
+    print("#####################################\n"
+          "#               STATS               #\n"
+          "#####################################")
     for horaire in horaires:
-        print("-----",horaire,"-----")
-        stopsDicoFiltered = Stop.filterByHoraire(arrivals, horaire)
-        for arrival in stopsDicoFiltered.values():
+        print("\n-----",horaire,"-----")
+        for arrival in network.filter(horaire, weekend):
             try:
-                timeTaken = timeit(lambda: departure.best_paths(arrival.name, horaire), number=1)
+                timeTaken = timeit(lambda: departure.best_paths(arrival.name, horaire, weekend), number=1)
                 print(f"✔️Chemins entre \"{departure.name}\" et \"{arrival.name}\"")
                 print(f"Durée execution: {timeTaken:.2f}")
             except NoPathException:
                 print(f"❌   Pas de chemin entre \"{departure.name}\" et \"{arrival.name}\"")
+            finally:
+                print("Cache hits:", Stop.nbSkippedWithCache)
         Stop.reset_cache()
 
 if __name__ == "__main__":
@@ -307,14 +317,22 @@ if __name__ == "__main__":
         "data/2_Piscine-Patinoire_Campus.txt"
     ]
 
+    # ----- Import des réseaux -----
     # network = Network.parseFiles(files)
     network = Network.parseFile(files[1])
-
     print("Réseau importé: ", network, "\n")
-    departure = network["Arret1"]
 
-    # defaultHoraires = [Horaire(14, 30), Horaire(8, 30), Horaire(6, 30)]
-    # displayBestPaths(departure, stopsDict, [Horaire(6)], weekend=False)
-    # displayStats(departure, stopsDico, defaultHoraires)
+    # ----- Calcul des trajets Pommaries -> Glaisin -----
+    departure = network["Pommaries"]
 
-    departure.display_best_paths("Arret5")
+    departure.display_best_paths("Glaisin")
+    # departure.display_best_paths("Glaisin", departure=Schedule(6,30))
+    # departure.display_best_paths("Glaisin", departure=Schedule(6,30), weekend=True)
+
+    # defaultSchedules = [Schedule(14, 30), Schedule(8, 30), Schedule(6, 30)]
+
+    # ------ Affichage spéciales : paths ------
+    # displayBestPaths(departure, network, defaultSchedules, weekend=False)
+
+    # ------ Affichage spéciales : stats ------
+    # displayStats(departure, network, defaultSchedules)
