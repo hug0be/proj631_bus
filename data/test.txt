@@ -9,3 +9,15 @@ Glaisin 6:25 6:44
 CAMPUS 6:28 -
 VIGNIÈRES - 6:48
 Pommaries 6:35 6:51
+
+Glaisin N CAMPUS N VIGNIÈRES N Pommaries
+
+Pommaries 8:13 8:33
+VIGNIÈRES - 8:38
+CAMPUS 8:20 -
+Glaisin 8:23 8:42
+
+Glaisin 8:25 8:44
+CAMPUS 8:28 -
+VIGNIÈRES - 8:48
+Pommaries 8:35 8:51
